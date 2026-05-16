@@ -97,6 +97,34 @@ This tests the **paper algorithm** specifically. It does not test the deployed `
 
 Full per-model JSONs in `benchmarks/results/*-2026-05-16.json` (uniform variants) and `benchmarks/results/*-2026-05-16-outlier.json` (outlier-aware variants).
 
+### Ablation: which part of N+D is doing the work? (added May 16, 2026)
+
+To understand which component of N+D drives its robustness, the harness includes a shared-codebook variant: same magnitude-direction decomposition, but the direction components are quantized with a single empirically-derived Lloyd-Max codebook over all values, replacing N+D's per-column min-max. Implementation in `nd_kv_quant/nd_shared.py`.
+
+**Per-head minimum cosine, N+D per-column vs N+D shared codebook:**
+
+| Bits | | Qwen2.5-7B | Qwen2.5-1.5B | Llama-3.1-8B | Mistral-7B-v0.3 |
+|---|---|---|---|---|---|
+| 4 | per-column | 0.969 | 0.991 | 0.990 | 0.991 |
+| 4 | shared codebook | 0.822 | 0.641 | 0.988 | 0.984 |
+| 4 | gap | +0.147 | +0.350 | +0.003 | +0.006 |
+| 3 | per-column | 0.925 | 0.954 | 0.948 | 0.949 |
+| 3 | shared codebook | 0.718 | 0.845 | 0.944 | 0.917 |
+| 3 | gap | +0.207 | +0.110 | +0.004 | +0.032 |
+| 2 | per-column | 0.595 | 0.759 | 0.781 | 0.765 |
+| 2 | shared codebook | 0.151 | 0.461 | 0.740 | 0.641 |
+| 2 | gap | +0.444 | +0.297 | +0.041 | +0.124 |
+
+The ablation decomposes N+D's behavior cleanly:
+
+- **Per-column adaptation is critical on Qwen.** Replacing it with a shared codebook costs 0.15-0.44 min cosine across bit widths. The shared codebook can't represent the channel-specific value ranges that Qwen's anisotropy produces.
+- **Per-column adaptation barely matters on Llama and Mistral.** Gaps of 0.003-0.04 at b=4, growing to 0.04-0.12 at b=2. The shared codebook still passes the 0.95 deployment threshold at b=4 on both clean models.
+- **The norm-extraction step is independently useful even with a shared codebook.** Shared-codebook N+D at b=4 hits min cos 0.82 on Qwen2.5-7B, well above KIVI's 0.59 and all uniform TurboQuant variants. Extracting the magnitude scalar is doing real work; per-column adaptation is what handles the channel-specific failure modes on top of that.
+
+This is an architectural fingerprint: **the per-column-vs-shared gap is a measurable property that predicts how aggressive the quantization scheme needs to be for a given model family.**
+
+Full per-model ablation JSONs in `benchmarks/results/*-2026-05-16-shared.json`.
+
 ---
 
 ## Method
@@ -131,7 +159,7 @@ The harness is designed to support apples-to-apples evaluation of arbitrary KV c
 
 2. **Cross-model evaluation.** Running the same compression method against four model families surfaces architecture-dependent failure modes that single-model evaluations hide. The Qwen-specific KIVI/TurboQuant failure is a clear example.
 
-3. **Pluggable methods.** New compression methods can be added by implementing the appropriate interface in `nd_kv_quant/quantization.py`. KIVI 4-bit/2-bit, N+D at 4/3/2-bit directions, TurboQuant (uniform random rotation and WHT), and TurboQuant with outlier-aware mixed precision are reference implementations.
+3. **Pluggable methods.** New compression methods can be added by implementing the appropriate interface in `nd_kv_quant/quantization.py`. KIVI 4-bit/2-bit, N+D at 4/3/2-bit directions (per-column and shared-codebook variants), TurboQuant (uniform random rotation and WHT), and TurboQuant with outlier-aware mixed precision are reference implementations.
 
 If you're working on a new KV cache compression method and want a direct comparison against KIVI, N+D, and the TurboQuant family across four model families with worst-case quality metrics, this harness should give you a result in a few minutes per model. PRs adding implementations of other published methods (NSNQuant, KVmix, deployed `tq3_0` variants, etc.) are welcome.
 
@@ -159,11 +187,11 @@ Three things, conservatively:
 
 1. **Per-vector mixed-precision scalar quantization** via magnitude-direction decomposition (8-bit norm, 2/3/4-bit direction). MiniCache established the primitive; this work applies it differently.
 
-2. **Cross-model evaluation surfacing architecture-dependent failure modes** under KIVI, paper-faithful TurboQuant, and outlier-aware TurboQuant. The finding that KIVI's catastrophic outlier layer problem is model-family-specific (Qwen vs. Llama/Mistral) is, to my knowledge, not directly reported in published evaluations. The same evaluation reveals that paper-faithful TurboQuant exhibits an analogous Qwen-specific failure, and that the standard outlier-aware recipe partially but incompletely rescues it.
+2. **Cross-model evaluation surfacing architecture-dependent failure modes** under KIVI, paper-faithful TurboQuant, and outlier-aware TurboQuant. The finding that KIVI's catastrophic outlier layer problem is model-family-specific (Qwen vs. Llama/Mistral) is, to my knowledge, not directly reported in published evaluations. The same evaluation reveals that paper-faithful TurboQuant exhibits an analogous Qwen-specific failure, and that the standard outlier-aware recipe partially but incompletely rescues it. An ablation of N+D itself (per-column vs shared codebook) shows that the per-column adaptation is the component responsible for N+D's Qwen robustness, while the norm extraction is independently useful across all models.
 
 3. **A reproducible evaluation harness** with first-class worst-case (per-head minimum) cosine reporting across multiple model families. The methodological contribution is making architecture-dependent failure modes visible.
 
-The decomposition primitive is not novel. The specific application, the cross-model failure-mode findings, and the worst-case-quality evaluation methodology are the contributions.
+The decomposition primitive is not novel. The specific application, the cross-model failure-mode findings, the ablation isolating the contribution of per-column adaptation, and the worst-case-quality evaluation methodology are the contributions.
 
 ---
 
