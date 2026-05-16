@@ -13,7 +13,7 @@ Validated across four models: Qwen2.5-7B, Qwen2.5-1.5B, Llama-3.1-8B, and Mistra
 ## Quick start
 
 ```bash
-git clone [REPO_URL]
+git clone https://github.com/gvillines-hub/nd-kv-quant.git
 cd nd-kv-quant
 pip install -e .
 python examples/quick_start.py
@@ -108,7 +108,7 @@ If you're working on a new KV cache compression method and want a direct compari
 
 ## Prior art
 
-This work was developed independently between roughly [START_DATE] and May 2026. A prior-art search in May 2026 identified substantial overlap with published work. The honest comparison:
+This work was developed independently prior to a prior-art search conducted in May 2026, which identified substantial overlap with published work. The honest comparison:
 
 ### Directly related — overlapping mechanism or primitive
 
@@ -166,7 +166,7 @@ gvillnes@gmail.com
   author = {Villines, Gregory},
   title  = {nd-kv-quant: Evaluation Harness and Norm-Direction Method for KV Cache Compression},
   year   = {2026},
-  url    = {[REPO_URL]},
+  url    = {https://github.com/gvillines-hub/nd-kv-quant},
 }
 ```
 
