@@ -4,7 +4,7 @@ A reproducible benchmark harness for evaluating KV cache compression methods, wi
 
 Validated across four models: Qwen2.5-7B, Qwen2.5-1.5B, Llama-3.1-8B, and Mistral-7B-v0.3.
 
-**Headline finding:** KIVI's catastrophic outlier layer failure is **model-specific to the Qwen family** in this evaluation, not a universal flaw. The same architecture-dependent pattern appears for paper-faithful TurboQuant (Zandieh et al., ICLR 2026) — works as claimed on Llama and Mistral, collapses to negative min cosine on Qwen2.5 at every bit width tested. Norm-Direction quantization is the only method evaluated here that maintains worst-case quality across all four model families.
+**Headline finding:** KIVI's catastrophic outlier layer failure is **model-specific to the Qwen family** in this evaluation, not a universal flaw. The same architecture-dependent pattern appears for paper-faithful TurboQuant (Zandieh et al., ICLR 2026) — works as claimed on Llama and Mistral, collapses to negative min cosine on Qwen2.5 at every bit width tested. Outlier-aware mixed precision (the community recipe from @scos-lab's findings in [llama.cpp #20969](https://github.com/ggml-org/llama.cpp/discussions/20969)) partially rescues TurboQuant on Qwen but does not fully recover. Norm-Direction quantization is the only method evaluated here that maintains per-head minimum cosine above 0.96 across all four model families.
 
 **Status:** Research implementation. The decomposition primitive overlaps with prior work (notably MiniCache, NeurIPS 2024, and the first step of NSNQuant); see [Prior Art](#prior-art) for an honest comparison.
 
@@ -68,22 +68,34 @@ N8+D3 offers **33% more compression than KIVI 4-bit while matching or exceeding 
 
 ### TurboQuant cross-model comparison (added May 16, 2026)
 
-Paper-faithful TurboQuant (Algorithm 1, Zandieh et al., ICLR 2026) was added to the harness in May 2026 to extend the cross-model comparison beyond KIVI. Both random rotation (paper) and Walsh-Hadamard Transform (the variant llama.cpp implementations ship) were tested. No QJL residual; community consensus from the [llama.cpp TurboQuant thread](https://github.com/ggml-org/llama.cpp/discussions/20969) is that QJL hurts attention quality at low bit-widths.
+Paper-faithful TurboQuant (Algorithm 1, Zandieh et al., ICLR 2026) was added to the harness in May 2026 to extend the cross-model comparison beyond KIVI. Three variants tested: random rotation (paper), Walsh-Hadamard Transform (the variant llama.cpp implementations ship), and outlier-aware mixed precision (the recipe described by @scos-lab in [llama.cpp #20969](https://github.com/ggml-org/llama.cpp/discussions/20969)).
 
-**Per-head minimum cosine at ~3.9x compression (4-bit):**
+No QJL residual is included; community consensus from @arclabs001 and @scos-lab is that QJL hurts attention quality at low bit-widths.
 
-| Model | KIVI 4-bit | N8+D4 | TurboQuant (random) | TurboQuant (WHT) |
+**Per-head minimum cosine, all variants:**
+
+| Variant | Qwen2.5-7B | Qwen2.5-1.5B | Llama-3.1-8B | Mistral-7B-v0.3 |
 |---|---|---|---|---|
-| Qwen2.5-7B | 0.588 | **0.969** | 0.034 | -0.051 |
-| Qwen2.5-1.5B | 0.646 | **0.991** | 0.144 | 0.024 |
-| Llama-3.1-8B | 0.977 | 0.990 | 0.974 | **0.977** |
-| Mistral-7B-v0.3 | 0.953 | **0.991** | 0.974 | 0.977 |
+| Uniform 4-bit random (~3.9x) | 0.034 | 0.144 | 0.974 | 0.974 |
+| Uniform 4-bit WHT (~3.9x) | -0.051 | 0.024 | 0.977 | 0.977 |
+| Outlier 3.5b (10%@8 + 90%@3, ~4.4x) | 0.132 | 0.389 | 0.971 | 0.978 |
+| Outlier 3.2b (20%@4 + 80%@3, ~4.8x) | **0.595** | **0.627** | 0.964 | 0.977 |
+| Outlier 2.25b (25%@3 + 75%@2, ~6.7x) | 0.320 | 0.219 | 0.862 | 0.914 |
+| **N+D N8+D4 (reference, 3.9x)** | **0.969** | **0.991** | **0.990** | **0.991** |
 
-TurboQuant matches its paper claims on Llama and Mistral (consistent with the paper's "identical to full-precision at 4x" Needle-In-A-Haystack result). On both Qwen2.5 models, per-head minimum collapses to near zero or negative — at least one head's attention output is anti-correlated with the FP16 baseline. The implementation was verified against the paper's analytical centroid values (page 10) and Lloyd-Max Gaussian distortion reference within 2% before this benchmark was run; see `tests/test_turboquant.py`.
+Three observations:
 
-This tests the **paper algorithm** specifically. It does not test the deployed `tq3_0` variants in llama.cpp, which include block-wise handling and outlier-channel treatment that the paper algorithm doesn't specify. Those may already address what's shown here.
+1. **Paper-faithful TurboQuant matches its published claims on Llama-3.1-8B and Mistral-7B-v0.3** (both around min cos 0.97 at 4-bit, consistent with the paper's Needle-In-A-Haystack result on Llama-3.1-8B), and **collapses to near-zero or negative min cosine on both Qwen2.5 models**. WHT substitution doesn't help.
 
-Full per-model JSONs in `benchmarks/results/*-2026-05-16.json`.
+2. **Outlier handling partially rescues TurboQuant on Qwen, but not fully.** The standard recipe (top-10% at 8-bit) brings Qwen2.5-7B from -0.05 → 0.13. Widening to 20% at 4-bit gets it to 0.60. Better, but still below the 0.95+ threshold for deployment safety. **20%@4-bit beats 10%@8-bit** on both Qwen models even though the average bit budget is similar — suggesting the outlier mass on Qwen is wider than the standard recipe assumes.
+
+3. **On Llama and Mistral, outlier handling makes essentially no difference.** It's a Qwen-class intervention, consistent with the K/V norm ratio data that predicts the failure mode in the first place.
+
+The implementation was verified against the paper's analytical centroid values (page 10) and Lloyd-Max Gaussian distortion reference within 2% before benchmarking; see `tests/test_turboquant.py`.
+
+This tests the **paper algorithm** specifically. It does not test the deployed `tq3_0` variants in llama.cpp from @TheTom, @animehacker, or @unixsysdev, which include block-wise handling and engineering specifics the paper doesn't cover. Those may behave differently than what's shown here.
+
+Full per-model JSONs in `benchmarks/results/*-2026-05-16.json` (uniform variants) and `benchmarks/results/*-2026-05-16-outlier.json` (outlier-aware variants).
 
 ---
 
@@ -117,11 +129,11 @@ The harness is designed to support apples-to-apples evaluation of arbitrary KV c
 
 1. **Per-head, per-layer minimum cosine reporting.** Most published evaluations report average cosine, perplexity, or downstream task accuracy — all of which can mask catastrophic outlier failures. KIVI's average cosine on Qwen2.5-7B at 706 tokens is 0.983, which looks fine; its min cosine is 0.588, meaning at least one layer/head combination has collapsed. The harness reports both.
 
-2. **Cross-model evaluation.** Running the same compression method against four model families surfaces architecture-dependent failure modes that single-model evaluations hide. The Qwen-specific KIVI failure is a clear example.
+2. **Cross-model evaluation.** Running the same compression method against four model families surfaces architecture-dependent failure modes that single-model evaluations hide. The Qwen-specific KIVI/TurboQuant failure is a clear example.
 
-3. **Pluggable methods.** New compression methods can be added by implementing the appropriate interface in `nd_kv_quant/quantization.py`. KIVI 4-bit/2-bit, N+D at 4/3/2-bit directions, and TurboQuant (random rotation and WHT) are reference implementations.
+3. **Pluggable methods.** New compression methods can be added by implementing the appropriate interface in `nd_kv_quant/quantization.py`. KIVI 4-bit/2-bit, N+D at 4/3/2-bit directions, TurboQuant (uniform random rotation and WHT), and TurboQuant with outlier-aware mixed precision are reference implementations.
 
-If you're working on a new KV cache compression method and want a direct comparison against KIVI, N+D, and TurboQuant across four model families with worst-case quality metrics, this harness should give you a result in a few minutes per model. PRs adding implementations of other published methods (NSNQuant, KVmix, outlier-aware TurboQuant variants, etc.) are welcome.
+If you're working on a new KV cache compression method and want a direct comparison against KIVI, N+D, and the TurboQuant family across four model families with worst-case quality metrics, this harness should give you a result in a few minutes per model. PRs adding implementations of other published methods (NSNQuant, KVmix, deployed `tq3_0` variants, etc.) are welcome.
 
 ---
 
@@ -135,7 +147,7 @@ This work was developed independently prior to a prior-art search conducted in M
 
 - **NSNQuant** (Son et al., NeurIPS 2025) [[paper](https://arxiv.org/abs/2505.18231)] uses a three-step "Normalize-Shift-Normalize" transformation with a Hadamard transform to align KV distributions with a standard normal for calibration-free vector quantization. The first step (token-wise normalization, i.e., extracting the norm) overlaps with this work; the remainder of the pipeline (channel-wise centering, Hadamard rotation, codebook-based VQ) is mechanically distinct from scalar mixed-precision quantization with a separate norm budget.
 
-- **PolarQuant** (Yu et al., 2025) and its productization **TurboQuant** (Zandieh et al., ICLR 2026) [[llama.cpp port](https://github.com/AmesianX/TurboQuant)] use rotation-based scalar quantization with a fixed Walsh-Hadamard transform and a precomputed codebook. Mechanically distinct from norm-direction decomposition. A paper-faithful implementation is now included in this harness (`nd_kv_quant/turboquant.py`); see the [TurboQuant cross-model comparison](#turboquant-cross-model-comparison-added-may-16-2026) section above for results. The TurboQuant llama.cpp discussion thread [#20969](https://github.com/ggml-org/llama.cpp/discussions/20969) independently observed that Qwen models fall in a regime where the K/V magnitude ratio is unusually high, which is consistent with the Qwen-specific failure mode this work documents for both KIVI and paper-faithful TurboQuant.
+- **PolarQuant** (Yu et al., 2025) and its productization **TurboQuant** (Zandieh et al., ICLR 2026) [[llama.cpp port](https://github.com/AmesianX/TurboQuant)] use rotation-based scalar quantization with a fixed Walsh-Hadamard transform and a precomputed codebook. Mechanically distinct from norm-direction decomposition. A paper-faithful implementation plus an outlier-aware mixed-precision variant are now included in this harness (`nd_kv_quant/turboquant.py`, `nd_kv_quant/turboquant_outlier.py`); see the [TurboQuant cross-model comparison](#turboquant-cross-model-comparison-added-may-16-2026) section above. The TurboQuant llama.cpp discussion thread [#20969](https://github.com/ggml-org/llama.cpp/discussions/20969) independently observed that Qwen models fall in a regime where the K/V magnitude ratio is unusually high, which is consistent with the Qwen-specific failure mode this work documents for both KIVI and paper-faithful TurboQuant. The outlier-aware recipe partially addresses this but does not fully recover the per-head minimum cosine on Qwen.
 
 ### Mixed-precision KV cache (same family, different mechanisms)
 
@@ -147,7 +159,7 @@ Three things, conservatively:
 
 1. **Per-vector mixed-precision scalar quantization** via magnitude-direction decomposition (8-bit norm, 2/3/4-bit direction). MiniCache established the primitive; this work applies it differently.
 
-2. **Cross-model evaluation surfacing architecture-dependent failure modes** under both KIVI and paper-faithful TurboQuant. The finding that KIVI's catastrophic outlier layer problem is model-family-specific (Qwen vs. Llama/Mistral) is, to my knowledge, not directly reported in published evaluations. The same evaluation reveals that paper-faithful TurboQuant exhibits an analogous Qwen-specific failure.
+2. **Cross-model evaluation surfacing architecture-dependent failure modes** under KIVI, paper-faithful TurboQuant, and outlier-aware TurboQuant. The finding that KIVI's catastrophic outlier layer problem is model-family-specific (Qwen vs. Llama/Mistral) is, to my knowledge, not directly reported in published evaluations. The same evaluation reveals that paper-faithful TurboQuant exhibits an analogous Qwen-specific failure, and that the standard outlier-aware recipe partially but incompletely rescues it.
 
 3. **A reproducible evaluation harness** with first-class worst-case (per-head minimum) cosine reporting across multiple model families. The methodological contribution is making architecture-dependent failure modes visible.
 
