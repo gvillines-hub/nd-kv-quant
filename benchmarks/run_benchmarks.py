@@ -11,19 +11,13 @@ prompt, then runs all compression methods and reports:
 
 The minimum cosine is the key diagnostic metric. Average performance is roughly
 equivalent across quantization methods. The interesting question is how badly
-the worst-case layer degrades. On some architectures (notably Qwen 2.5),
-KIVI 4-bit can silently produce per-layer cosines below 0.7 even when the
-average looks fine. N+D quantization at equal compression typically keeps the
-minimum above 0.95.
+the worst-case layer degrades.
 
-TurboQuant (Zandieh et al., ICLR 2026) is the rotation-based method currently
-being integrated into llama.cpp by the open-source community. Two variants are
-included:
-  - random rotation (Algorithm 1 from the paper)
-  - Walsh-Hadamard Transform (the variant llama.cpp implementations actually ship)
-
-Whether you NEED N+D depends on whether your model exhibits this failure mode.
-This benchmark is the diagnostic.
+TurboQuant (Zandieh et al., ICLR 2026) is tested in three forms:
+  - Uniform random rotation (Algorithm 1 from the paper)
+  - Uniform WHT (variant llama.cpp implementations ship)
+  - Outlier-aware mixed precision (the deployment recipe from @scos-lab's thread
+    findings: top-10% channels by RMS at 8-bit, rest at 3-bit via TurboQuant)
 
 Usage:
     python benchmarks/run_benchmarks.py
@@ -47,17 +41,10 @@ from nd_kv_quant import (
 )
 from nd_kv_quant.extraction import extract_kv_cache
 from nd_kv_quant.turboquant import quant_turboquant_kv
+from nd_kv_quant.turboquant_outlier import quant_turboquant_outlier_aware_kv
 
 
 def classify_kivi_health(min_cos: float) -> str:
-    """
-    Categorize KIVI 4-bit worst-case behavior on the tested model.
-
-    These thresholds are heuristic, drawn from empirical observation of how
-    KIVI behaves across multiple model families. Models with min cosine
-    above 0.95 work well with KIVI; below 0.85 indicates a likely silent
-    failure mode that production telemetry would not catch.
-    """
     if min_cos >= 0.95:
         return "HEALTHY"
     elif min_cos >= 0.85:
@@ -81,7 +68,6 @@ def main():
     print(f"Started:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print()
 
-    # Extract KV cache
     print("Extracting KV cache from model...")
     t0 = time.time()
     all_K, all_V, n_layers, n_heads, seq_len = extract_kv_cache(
@@ -94,18 +80,21 @@ def main():
 
     # Define methods to test
     methods = [
-        ("FP16 baseline",            lambda K, V: (K.copy(), V.copy(), seq_len * head_dim * 2 * 2)),
-        ("KIVI 4-bit",               lambda K, V: quant_kivi(K, V, 4)),
-        ("KIVI 2-bit",               lambda K, V: quant_kivi(K, V, 2)),
-        ("N8+D4 (quality)",          lambda K, V: quant_nd_kv(K, V, 8, 4)),
-        ("N8+D3 (Pareto)",           lambda K, V: quant_nd_kv(K, V, 8, 3)),
-        ("N8+D2 (aggressive)",       lambda K, V: quant_nd_kv(K, V, 8, 2)),
-        ("TurboQuant 4-bit (rand)",  lambda K, V: quant_turboquant_kv(K, V, 4, rotation="random")),
-        ("TurboQuant 4-bit (WHT)",   lambda K, V: quant_turboquant_kv(K, V, 4, rotation="wht")),
-        ("TurboQuant 3-bit (rand)",  lambda K, V: quant_turboquant_kv(K, V, 3, rotation="random")),
-        ("TurboQuant 3-bit (WHT)",   lambda K, V: quant_turboquant_kv(K, V, 3, rotation="wht")),
-        ("TurboQuant 2-bit (rand)",  lambda K, V: quant_turboquant_kv(K, V, 2, rotation="random")),
-        ("TurboQuant 2-bit (WHT)",   lambda K, V: quant_turboquant_kv(K, V, 2, rotation="wht")),
+        ("FP16 baseline",             lambda K, V: (K.copy(), V.copy(), seq_len * head_dim * 2 * 2)),
+        ("KIVI 4-bit",                lambda K, V: quant_kivi(K, V, 4)),
+        ("KIVI 2-bit",                lambda K, V: quant_kivi(K, V, 2)),
+        ("N8+D4 (quality)",           lambda K, V: quant_nd_kv(K, V, 8, 4)),
+        ("N8+D3 (Pareto)",            lambda K, V: quant_nd_kv(K, V, 8, 3)),
+        ("N8+D2 (aggressive)",        lambda K, V: quant_nd_kv(K, V, 8, 2)),
+        ("TurboQuant 4-bit (rand)",   lambda K, V: quant_turboquant_kv(K, V, 4, rotation="random")),
+        ("TurboQuant 4-bit (WHT)",    lambda K, V: quant_turboquant_kv(K, V, 4, rotation="wht")),
+        ("TurboQuant 3-bit (rand)",   lambda K, V: quant_turboquant_kv(K, V, 3, rotation="random")),
+        ("TurboQuant 3-bit (WHT)",    lambda K, V: quant_turboquant_kv(K, V, 3, rotation="wht")),
+        ("TurboQuant 2-bit (rand)",   lambda K, V: quant_turboquant_kv(K, V, 2, rotation="random")),
+        ("TurboQuant 2-bit (WHT)",    lambda K, V: quant_turboquant_kv(K, V, 2, rotation="wht")),
+        ("TQ outlier 3.5b (10%@8+3)", lambda K, V: quant_turboquant_outlier_aware_kv(K, V, 8, 3, 0.10)),
+        ("TQ outlier 3.2b (20%@4+3)", lambda K, V: quant_turboquant_outlier_aware_kv(K, V, 4, 3, 0.20)),
+        ("TQ outlier 2.25b (25%@3+2)",lambda K, V: quant_turboquant_outlier_aware_kv(K, V, 3, 2, 0.25)),
     ]
 
     results = {}
@@ -149,7 +138,6 @@ def main():
             "min_cos": min_cos,
         }
 
-    # Data-driven diagnostic summary based on THIS run's actual numbers
     kivi_min = results["KIVI 4-bit"]["min_cos"]
     nd_min = results["N8+D4 (quality)"]["min_cos"]
     gap = nd_min - kivi_min
@@ -181,7 +169,6 @@ def main():
         print("  KIVI 4-bit works well on this model. N+D offers marginal improvement")
         print("  but no urgent reason to switch unless you want the headroom.")
 
-    # Save results
     output_data = {
         "model": args.model,
         "n_layers": n_layers,
