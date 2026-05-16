@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nd-kv-quant"
+version = "0.1.0"
+description = "Norm+Direction quantization for transformer KV cache"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Gregory Villines" }
+]
+keywords = ["llm", "kv-cache", "quantization", "inference", "transformer"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "numpy>=1.20",
+]
+
+[project.optional-dependencies]
+# For running the benchmark on real HuggingFace models
+benchmark = [
+    "torch>=2.0",
+    "transformers>=4.40",
+    "accelerate>=0.20",
+]
+# For 4-bit model loading (GPU only)
+fourbit = [
+    "bitsandbytes>=0.41",
+]
+# For development
+dev = [
+    "pytest>=7.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/gvillines-hub/nd-kv-quant"
+Repository = "https://github.com/gvillines-hub/nd-kv-quant"
+
+[tool.setuptools.packages.find]
+include = ["nd_kv_quant*"]
+exclude = ["tests*", "benchmarks*", "examples*"]
