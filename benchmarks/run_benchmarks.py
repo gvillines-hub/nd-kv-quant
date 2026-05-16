@@ -1,5 +1,5 @@
 """
-Reproducible benchmark: N+D vs KIVI on a real model.
+Reproducible benchmark: N+D vs KIVI vs TurboQuant on a real model.
 
 Loads a HuggingFace transformer model, extracts the KV cache from a long-context
 prompt, then runs all compression methods and reports:
@@ -15,6 +15,12 @@ the worst-case layer degrades. On some architectures (notably Qwen 2.5),
 KIVI 4-bit can silently produce per-layer cosines below 0.7 even when the
 average looks fine. N+D quantization at equal compression typically keeps the
 minimum above 0.95.
+
+TurboQuant (Zandieh et al., ICLR 2026) is the rotation-based method currently
+being integrated into llama.cpp by the open-source community. Two variants are
+included:
+  - random rotation (Algorithm 1 from the paper)
+  - Walsh-Hadamard Transform (the variant llama.cpp implementations actually ship)
 
 Whether you NEED N+D depends on whether your model exhibits this failure mode.
 This benchmark is the diagnostic.
@@ -40,12 +46,13 @@ from nd_kv_quant import (
     compute_output_cosine,
 )
 from nd_kv_quant.extraction import extract_kv_cache
+from nd_kv_quant.turboquant import quant_turboquant_kv
 
 
 def classify_kivi_health(min_cos: float) -> str:
     """
     Categorize KIVI 4-bit worst-case behavior on the tested model.
-    
+
     These thresholds are heuristic, drawn from empirical observation of how
     KIVI behaves across multiple model families. Models with min cosine
     above 0.95 work well with KIVI; below 0.85 indicates a likely silent
@@ -60,12 +67,12 @@ def classify_kivi_health(min_cos: float) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="N+D vs KIVI benchmark")
+    parser = argparse.ArgumentParser(description="N+D vs KIVI vs TurboQuant benchmark")
     parser.add_argument("--model", default="Qwen/Qwen2.5-7B", help="HuggingFace model ID")
     parser.add_argument("--no-4bit", action="store_true", help="Disable 4-bit loading")
     parser.add_argument("--output", default="benchmark_results.json", help="Save results JSON")
     args = parser.parse_args()
-    
+
     print("=" * 80)
     print("ND-KV-QUANT BENCHMARK")
     print("=" * 80)
@@ -73,7 +80,7 @@ def main():
     print(f"4-bit:    {not args.no_4bit}")
     print(f"Started:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print()
-    
+
     # Extract KV cache
     print("Extracting KV cache from model...")
     t0 = time.time()
@@ -84,64 +91,70 @@ def main():
     print(f"  {n_layers} layers x {n_heads} KV heads x {head_dim} dim x {seq_len} tokens")
     print(f"  Extraction time: {time.time() - t0:.1f}s")
     print()
-    
+
     # Define methods to test
     methods = [
-        ("FP16 baseline",       lambda K, V: (K.copy(), V.copy(), seq_len * head_dim * 2 * 2)),
-        ("KIVI 4-bit",          lambda K, V: quant_kivi(K, V, 4)),
-        ("KIVI 2-bit",          lambda K, V: quant_kivi(K, V, 2)),
-        ("N8+D4 (quality)",     lambda K, V: quant_nd_kv(K, V, 8, 4)),
-        ("N8+D3 (Pareto)",      lambda K, V: quant_nd_kv(K, V, 8, 3)),
-        ("N8+D2 (aggressive)",  lambda K, V: quant_nd_kv(K, V, 8, 2)),
+        ("FP16 baseline",            lambda K, V: (K.copy(), V.copy(), seq_len * head_dim * 2 * 2)),
+        ("KIVI 4-bit",               lambda K, V: quant_kivi(K, V, 4)),
+        ("KIVI 2-bit",               lambda K, V: quant_kivi(K, V, 2)),
+        ("N8+D4 (quality)",          lambda K, V: quant_nd_kv(K, V, 8, 4)),
+        ("N8+D3 (Pareto)",           lambda K, V: quant_nd_kv(K, V, 8, 3)),
+        ("N8+D2 (aggressive)",       lambda K, V: quant_nd_kv(K, V, 8, 2)),
+        ("TurboQuant 4-bit (rand)",  lambda K, V: quant_turboquant_kv(K, V, 4, rotation="random")),
+        ("TurboQuant 4-bit (WHT)",   lambda K, V: quant_turboquant_kv(K, V, 4, rotation="wht")),
+        ("TurboQuant 3-bit (rand)",  lambda K, V: quant_turboquant_kv(K, V, 3, rotation="random")),
+        ("TurboQuant 3-bit (WHT)",   lambda K, V: quant_turboquant_kv(K, V, 3, rotation="wht")),
+        ("TurboQuant 2-bit (rand)",  lambda K, V: quant_turboquant_kv(K, V, 2, rotation="random")),
+        ("TurboQuant 2-bit (WHT)",   lambda K, V: quant_turboquant_kv(K, V, 2, rotation="wht")),
     ]
-    
+
     results = {}
-    
+
     print(f"{'Method':<32} {'Comp':>6} {'AvgCos':>10} {'P5':>8} {'Min':>8}")
     print("-" * 70)
-    
+
     for name, fn in methods:
         total_orig = 0
         total_comp = 0
         cosines = []
-        
+
         for l in range(n_layers):
             for h in range(n_heads):
                 K = all_K[l][h]
                 V = all_V[l][h]
                 fp16_bytes = seq_len * head_dim * 2 * 2
                 total_orig += fp16_bytes
-                
+
                 K_c, V_c, c_bytes = fn(K, V)
                 total_comp += c_bytes
                 cosines.append(compute_output_cosine(K, V, K_c, V_c))
-        
+
         comp_ratio = total_orig / total_comp
         avg_cos = float(np.mean(cosines))
         p5_cos = float(np.percentile(cosines, 5))
         min_cos = float(np.min(cosines))
-        
+
         flag = ""
         if name.startswith("N8+D") and "KIVI 4-bit" in results:
             kivi = results["KIVI 4-bit"]
             if avg_cos > kivi["avg_cos"] and min_cos > kivi["min_cos"] and comp_ratio >= 3.5:
                 flag = "  <- beats KIVI"
-        
+
         print(f"  {name:<30} {comp_ratio:>5.1f}x {avg_cos:>10.4f} {p5_cos:>8.4f} {min_cos:>8.4f}{flag}")
-        
+
         results[name] = {
             "compression_ratio": comp_ratio,
             "avg_cos": avg_cos,
             "p5_cos": p5_cos,
             "min_cos": min_cos,
         }
-    
+
     # Data-driven diagnostic summary based on THIS run's actual numbers
     kivi_min = results["KIVI 4-bit"]["min_cos"]
     nd_min = results["N8+D4 (quality)"]["min_cos"]
     gap = nd_min - kivi_min
     health = classify_kivi_health(kivi_min)
-    
+
     print()
     print("=" * 80)
     print(f"DIAGNOSTIC: KIVI 4-bit worst-case behavior on {args.model}")
@@ -151,7 +164,7 @@ def main():
     print(f"  Gap (N+D advantage):    {gap:+.4f}")
     print(f"  Verdict:                {health}")
     print()
-    
+
     if health == "CATASTROPHIC":
         print("  This model exhibits silent failure mode under KIVI 4-bit.")
         print("  The average looks fine but at least one layer has a worst-case")
@@ -167,7 +180,7 @@ def main():
     else:
         print("  KIVI 4-bit works well on this model. N+D offers marginal improvement")
         print("  but no urgent reason to switch unless you want the headroom.")
-    
+
     # Save results
     output_data = {
         "model": args.model,
@@ -184,10 +197,10 @@ def main():
         },
         "results": results,
     }
-    
+
     with open(args.output, "w") as f:
         json.dump(output_data, f, indent=2)
-    
+
     print()
     print(f"Results saved to {args.output}")
 

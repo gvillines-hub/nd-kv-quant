@@ -1,0 +1,88 @@
+{
+  "model": "Qwen/Qwen2.5-7B",
+  "n_layers": 28,
+  "n_heads": 4,
+  "head_dim": 128,
+  "seq_len": 706,
+  "timestamp": "2026-05-16T12:24:18.560553",
+  "diagnostic": {
+    "kivi_4bit_min_cos": 0.5875577825966865,
+    "nd_n8d4_min_cos": 0.9691074964231451,
+    "gap": 0.38154971382645864,
+    "verdict": "CATASTROPHIC"
+  },
+  "results": {
+    "FP16 baseline": {
+      "compression_ratio": 1.0,
+      "avg_cos": 0.9999999999932072,
+      "p5_cos": 0.9999999999636444,
+      "min_cos": 0.9999999998738838
+    },
+    "KIVI 4-bit": {
+      "compression_ratio": 3.857594126184581,
+      "avg_cos": 0.9828006442289406,
+      "p5_cos": 0.9521421977956896,
+      "min_cos": 0.5875577825966865
+    },
+    "KIVI 2-bit": {
+      "compression_ratio": 7.449958779884584,
+      "avg_cos": 0.8193875856032667,
+      "p5_cos": 0.6058634567178905,
+      "min_cos": 0.1192896829363799
+    },
+    "N8+D4 (quality)": {
+      "compression_ratio": 3.8946687928285137,
+      "avg_cos": 0.9933916663552692,
+      "p5_cos": 0.9896851576126494,
+      "min_cos": 0.9691074964231451
+    },
+    "N8+D3 (Pareto)": {
+      "compression_ratio": 5.147707205924238,
+      "avg_cos": 0.9692702558177176,
+      "p5_cos": 0.9494853155154009,
+      "min_cos": 0.9253072326656693
+    },
+    "N8+D2 (aggressive)": {
+      "compression_ratio": 7.589485176786764,
+      "avg_cos": 0.8501367433959726,
+      "p5_cos": 0.7838910146130443,
+      "min_cos": 0.5953794503782247
+    },
+    "TurboQuant 4-bit (rand)": {
+      "compression_ratio": 3.878787878787879,
+      "avg_cos": 0.9462008609812952,
+      "p5_cos": 0.6445527631651905,
+      "min_cos": 0.03357289912493866
+    },
+    "TurboQuant 4-bit (WHT)": {
+      "compression_ratio": 3.878787878787879,
+      "avg_cos": 0.945344779357459,
+      "p5_cos": 0.6525271977066149,
+      "min_cos": -0.05104167346928033
+    },
+    "TurboQuant 3-bit (rand)": {
+      "compression_ratio": 5.12,
+      "avg_cos": 0.9276019146179019,
+      "p5_cos": 0.6646109734459981,
+      "min_cos": -0.01525506327227564
+    },
+    "TurboQuant 3-bit (WHT)": {
+      "compression_ratio": 5.12,
+      "avg_cos": 0.9217997889329761,
+      "p5_cos": 0.43178163220312715,
+      "min_cos": -0.031088917521997834
+    },
+    "TurboQuant 2-bit (rand)": {
+      "compression_ratio": 7.529411764705882,
+      "avg_cos": 0.8813826949813054,
+      "p5_cos": 0.5149947068315885,
+      "min_cos": 0.07850763569592732
+    },
+    "TurboQuant 2-bit (WHT)": {
+      "compression_ratio": 7.529411764705882,
+      "avg_cos": 0.8865086525452075,
+      "p5_cos": 0.5929349087616054,
+      "min_cos": 0.0010095153240217544
+    }
+  }
+}
