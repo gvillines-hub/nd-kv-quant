@@ -1,0 +1,124 @@
+{
+  "model": "meta-llama/Llama-3.1-8B",
+  "n_layers": 32,
+  "n_heads": 8,
+  "head_dim": 128,
+  "seq_len": 707,
+  "timestamp": "2026-05-16T13:52:53.774028",
+  "diagnostic": {
+    "kivi_4bit_min_cos": 0.9767595053360729,
+    "nd_n8d4_min_cos": 0.9902489105936021,
+    "gap": 0.013489405257529175,
+    "verdict": "HEALTHY"
+  },
+  "results": {
+    "FP16 baseline": {
+      "compression_ratio": 1.0,
+      "avg_cos": 0.9999999998406601,
+      "p5_cos": 0.9999999998083744,
+      "min_cos": 0.9999999905757828
+    },
+    "KIVI 4-bit": {
+      "compression_ratio": 3.857623939639371,
+      "avg_cos": 0.9920003102459899,
+      "p5_cos": 0.9876266313884172,
+      "min_cos": 0.9767595053360729
+    },
+    "KIVI 2-bit": {
+      "compression_ratio": 7.450069976125793,
+      "avg_cos": 0.8505805560008433,
+      "p5_cos": 0.7829089348566607,
+      "min_cos": 0.7021224207579791
+    },
+    "N8+D4 (per-col, quality)": {
+      "compression_ratio": 3.8947300466957886,
+      "avg_cos": 0.9936215915911872,
+      "p5_cos": 0.9924867763863972,
+      "min_cos": 0.9902489105936021
+    },
+    "N8+D3 (per-col, Pareto)": {
+      "compression_ratio": 5.147814215421372,
+      "avg_cos": 0.9697000913183647,
+      "p5_cos": 0.9623113020971442,
+      "min_cos": 0.9477105289937373
+    },
+    "N8+D2 (per-col, aggressive)": {
+      "compression_ratio": 7.589717784207657,
+      "avg_cos": 0.8606971062204524,
+      "p5_cos": 0.8288758104547073,
+      "min_cos": 0.7806987108226586
+    },
+    "N8+D4 (shared codebook)": {
+      "compression_ratio": 3.9326423744649412,
+      "avg_cos": 0.9932309791037368,
+      "p5_cos": 0.9909947979838007,
+      "min_cos": 0.9877250307040183
+    },
+    "N8+D3 (shared codebook)": {
+      "compression_ratio": 5.219066293722426,
+      "avg_cos": 0.9739186420573495,
+      "p5_cos": 0.9636303771520409,
+      "min_cos": 0.9440845856282756
+    },
+    "N8+D2 (shared codebook)": {
+      "compression_ratio": 7.750931437625797,
+      "avg_cos": 0.9080258394562145,
+      "p5_cos": 0.8650931336177753,
+      "min_cos": 0.740048996361299
+    },
+    "TurboQuant 4-bit (rand)": {
+      "compression_ratio": 3.878787878787879,
+      "avg_cos": 0.9930276017823643,
+      "p5_cos": 0.9889181810697433,
+      "min_cos": 0.9740987726507441
+    },
+    "TurboQuant 4-bit (WHT)": {
+      "compression_ratio": 3.878787878787879,
+      "avg_cos": 0.9931980114718626,
+      "p5_cos": 0.9895643282607207,
+      "min_cos": 0.9772553248425856
+    },
+    "TurboQuant 3-bit (rand)": {
+      "compression_ratio": 5.12,
+      "avg_cos": 0.976851933288521,
+      "p5_cos": 0.9656655551725074,
+      "min_cos": 0.9325260452963183
+    },
+    "TurboQuant 3-bit (WHT)": {
+      "compression_ratio": 5.12,
+      "avg_cos": 0.9770761418574228,
+      "p5_cos": 0.9668302360328276,
+      "min_cos": 0.9351049879835058
+    },
+    "TurboQuant 2-bit (rand)": {
+      "compression_ratio": 7.529411764705882,
+      "avg_cos": 0.9265928372091964,
+      "p5_cos": 0.9008114942625919,
+      "min_cos": 0.8288589401945502
+    },
+    "TurboQuant 2-bit (WHT)": {
+      "compression_ratio": 7.529411764705882,
+      "avg_cos": 0.9272442790262593,
+      "p5_cos": 0.9040903857392396,
+      "min_cos": 0.8302796635973919
+    },
+    "TQ outlier 3.5b (10%@8+3)": {
+      "compression_ratio": 4.398735003994884,
+      "avg_cos": 0.9856274072665385,
+      "p5_cos": 0.981544234519671,
+      "min_cos": 0.9714424825530152
+    },
+    "TQ outlier 3.2b (20%@4+3)": {
+      "compression_ratio": 4.794267815399286,
+      "avg_cos": 0.9842954249397264,
+      "p5_cos": 0.9791602524898151,
+      "min_cos": 0.9642534129623447
+    },
+    "TQ outlier 2.25b (25%@3+2)": {
+      "compression_ratio": 6.704897384603986,
+      "avg_cos": 0.9442665220103794,
+      "p5_cos": 0.9240975371959644,
+      "min_cos": 0.8616910699697024
+    }
+  }
+}

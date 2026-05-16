@@ -13,18 +13,19 @@ The minimum cosine is the key diagnostic metric. Average performance is roughly
 equivalent across quantization methods. The interesting question is how badly
 the worst-case layer degrades.
 
-TurboQuant (Zandieh et al., ICLR 2026) is tested in three forms:
-  - Uniform random rotation (Algorithm 1 from the paper)
-  - Uniform WHT (variant llama.cpp implementations ship)
-  - Outlier-aware mixed precision (the deployment recipe from @scos-lab's thread
-    findings: top-10% channels by RMS at 8-bit, rest at 3-bit via TurboQuant)
+Methods tested:
+  - KIVI 4-bit / 2-bit baselines
+  - N+D N8+D4 / D3 / D2 (per-column min-max on direction components)
+  - N+D shared codebook variants (Lloyd-Max ablation: same as N+D but with a
+    single empirical codebook for all direction values, testing whether
+    per-column adaptation is doing real work)
+  - TurboQuant uniform (random rotation + WHT)
+  - TurboQuant outlier-aware mixed precision
 
 Usage:
     python benchmarks/run_benchmarks.py
     python benchmarks/run_benchmarks.py --model meta-llama/Llama-3.1-8B
-    python benchmarks/run_benchmarks.py --no-4bit         # use fp16 instead of bitsandbytes
-
-Requires GPU. Tested on RTX 5060 Ti 16GB and similar.
+    python benchmarks/run_benchmarks.py --no-4bit
 """
 
 import argparse
@@ -42,6 +43,7 @@ from nd_kv_quant import (
 from nd_kv_quant.extraction import extract_kv_cache
 from nd_kv_quant.turboquant import quant_turboquant_kv
 from nd_kv_quant.turboquant_outlier import quant_turboquant_outlier_aware_kv
+from nd_kv_quant.nd_shared import quant_nd_kv_shared
 
 
 def classify_kivi_health(min_cos: float) -> str:
@@ -78,23 +80,25 @@ def main():
     print(f"  Extraction time: {time.time() - t0:.1f}s")
     print()
 
-    # Define methods to test
     methods = [
-        ("FP16 baseline",             lambda K, V: (K.copy(), V.copy(), seq_len * head_dim * 2 * 2)),
-        ("KIVI 4-bit",                lambda K, V: quant_kivi(K, V, 4)),
-        ("KIVI 2-bit",                lambda K, V: quant_kivi(K, V, 2)),
-        ("N8+D4 (quality)",           lambda K, V: quant_nd_kv(K, V, 8, 4)),
-        ("N8+D3 (Pareto)",            lambda K, V: quant_nd_kv(K, V, 8, 3)),
-        ("N8+D2 (aggressive)",        lambda K, V: quant_nd_kv(K, V, 8, 2)),
-        ("TurboQuant 4-bit (rand)",   lambda K, V: quant_turboquant_kv(K, V, 4, rotation="random")),
-        ("TurboQuant 4-bit (WHT)",    lambda K, V: quant_turboquant_kv(K, V, 4, rotation="wht")),
-        ("TurboQuant 3-bit (rand)",   lambda K, V: quant_turboquant_kv(K, V, 3, rotation="random")),
-        ("TurboQuant 3-bit (WHT)",    lambda K, V: quant_turboquant_kv(K, V, 3, rotation="wht")),
-        ("TurboQuant 2-bit (rand)",   lambda K, V: quant_turboquant_kv(K, V, 2, rotation="random")),
-        ("TurboQuant 2-bit (WHT)",    lambda K, V: quant_turboquant_kv(K, V, 2, rotation="wht")),
-        ("TQ outlier 3.5b (10%@8+3)", lambda K, V: quant_turboquant_outlier_aware_kv(K, V, 8, 3, 0.10)),
-        ("TQ outlier 3.2b (20%@4+3)", lambda K, V: quant_turboquant_outlier_aware_kv(K, V, 4, 3, 0.20)),
-        ("TQ outlier 2.25b (25%@3+2)",lambda K, V: quant_turboquant_outlier_aware_kv(K, V, 3, 2, 0.25)),
+        ("FP16 baseline",                lambda K, V: (K.copy(), V.copy(), seq_len * head_dim * 2 * 2)),
+        ("KIVI 4-bit",                   lambda K, V: quant_kivi(K, V, 4)),
+        ("KIVI 2-bit",                   lambda K, V: quant_kivi(K, V, 2)),
+        ("N8+D4 (per-col, quality)",     lambda K, V: quant_nd_kv(K, V, 8, 4)),
+        ("N8+D3 (per-col, Pareto)",      lambda K, V: quant_nd_kv(K, V, 8, 3)),
+        ("N8+D2 (per-col, aggressive)",  lambda K, V: quant_nd_kv(K, V, 8, 2)),
+        ("N8+D4 (shared codebook)",      lambda K, V: quant_nd_kv_shared(K, V, 8, 4)),
+        ("N8+D3 (shared codebook)",      lambda K, V: quant_nd_kv_shared(K, V, 8, 3)),
+        ("N8+D2 (shared codebook)",      lambda K, V: quant_nd_kv_shared(K, V, 8, 2)),
+        ("TurboQuant 4-bit (rand)",      lambda K, V: quant_turboquant_kv(K, V, 4, rotation="random")),
+        ("TurboQuant 4-bit (WHT)",       lambda K, V: quant_turboquant_kv(K, V, 4, rotation="wht")),
+        ("TurboQuant 3-bit (rand)",      lambda K, V: quant_turboquant_kv(K, V, 3, rotation="random")),
+        ("TurboQuant 3-bit (WHT)",       lambda K, V: quant_turboquant_kv(K, V, 3, rotation="wht")),
+        ("TurboQuant 2-bit (rand)",      lambda K, V: quant_turboquant_kv(K, V, 2, rotation="random")),
+        ("TurboQuant 2-bit (WHT)",       lambda K, V: quant_turboquant_kv(K, V, 2, rotation="wht")),
+        ("TQ outlier 3.5b (10%@8+3)",    lambda K, V: quant_turboquant_outlier_aware_kv(K, V, 8, 3, 0.10)),
+        ("TQ outlier 3.2b (20%@4+3)",    lambda K, V: quant_turboquant_outlier_aware_kv(K, V, 4, 3, 0.20)),
+        ("TQ outlier 2.25b (25%@3+2)",   lambda K, V: quant_turboquant_outlier_aware_kv(K, V, 3, 2, 0.25)),
     ]
 
     results = {}
@@ -124,7 +128,7 @@ def main():
         min_cos = float(np.min(cosines))
 
         flag = ""
-        if name.startswith("N8+D") and "KIVI 4-bit" in results:
+        if name.startswith("N8+D") and "per-col" in name and "KIVI 4-bit" in results:
             kivi = results["KIVI 4-bit"]
             if avg_cos > kivi["avg_cos"] and min_cos > kivi["min_cos"] and comp_ratio >= 3.5:
                 flag = "  <- beats KIVI"
@@ -139,7 +143,7 @@ def main():
         }
 
     kivi_min = results["KIVI 4-bit"]["min_cos"]
-    nd_min = results["N8+D4 (quality)"]["min_cos"]
+    nd_min = results["N8+D4 (per-col, quality)"]["min_cos"]
     gap = nd_min - kivi_min
     health = classify_kivi_health(kivi_min)
 
@@ -153,21 +157,16 @@ def main():
     print(f"  Verdict:                {health}")
     print()
 
-    if health == "CATASTROPHIC":
-        print("  This model exhibits silent failure mode under KIVI 4-bit.")
-        print("  The average looks fine but at least one layer has a worst-case")
-        print("  attention output cosine far below 0.85. Production telemetry")
-        print("  measuring perplexity or task accuracy would likely not catch this.")
-        print()
-        print("  N+D quantization at equal compression maintains worst-case behavior.")
-        print("  Recommend switching to N8+D4 for this model.")
-    elif health == "DEGRADED":
-        print("  This model shows some worst-case degradation under KIVI 4-bit.")
-        print("  Not catastrophic but worth monitoring. N+D would improve worst-case")
-        print("  behavior at the same compression ratio.")
-    else:
-        print("  KIVI 4-bit works well on this model. N+D offers marginal improvement")
-        print("  but no urgent reason to switch unless you want the headroom.")
+    # Shared codebook ablation summary
+    print("=" * 80)
+    print("ABLATION: N+D per-column vs shared codebook")
+    print("=" * 80)
+    for b in [4, 3, 2]:
+        per_col = results.get(f"N8+D{b} (per-col, " + ("quality" if b == 4 else "Pareto" if b == 3 else "aggressive") + ")", None)
+        shared = results.get(f"N8+D{b} (shared codebook)", None)
+        if per_col and shared:
+            print(f"  b={b}: per-col min {per_col['min_cos']:.4f} vs shared min {shared['min_cos']:.4f} "
+                  f"(gap: {per_col['min_cos'] - shared['min_cos']:+.4f})")
 
     output_data = {
         "model": args.model,
