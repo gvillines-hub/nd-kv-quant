@@ -4,7 +4,7 @@ A reproducible benchmark harness for evaluating KV cache compression methods, wi
 
 Validated across four models: Qwen2.5-7B, Qwen2.5-1.5B, Llama-3.1-8B, and Mistral-7B-v0.3.
 
-**Headline finding:** KIVI's catastrophic outlier layer failure is **model-specific to the Qwen family** in this evaluation, not a universal flaw. Norm-Direction quantization fixes that failure on Qwen models, matches KIVI on Llama and Mistral, and dominates KIVI in the aggressive (≤2-bit-equivalent) compression regime on every model tested.
+**Headline finding:** KIVI's catastrophic outlier layer failure is **model-specific to the Qwen family** in this evaluation, not a universal flaw. The same architecture-dependent pattern appears for paper-faithful TurboQuant (Zandieh et al., ICLR 2026) — works as claimed on Llama and Mistral, collapses to negative min cosine on Qwen2.5 at every bit width tested. Norm-Direction quantization is the only method evaluated here that maintains worst-case quality across all four model families.
 
 **Status:** Research implementation. The decomposition primitive overlaps with prior work (notably MiniCache, NeurIPS 2024, and the first step of NSNQuant); see [Prior Art](#prior-art) for an honest comparison.
 
@@ -33,7 +33,7 @@ Tested on an NVIDIA RTX 5060 Ti (16GB) and on a BossGame AMD Ryzen AI Max+ 395 m
 
 ## Headline results
 
-### Worst-case quality (min cosine) vs. KIVI 4-bit at ~3.9× compression
+### Worst-case quality (min cosine) vs. KIVI 4-bit at ~3.9x compression
 
 | Model | KIVI 4-bit min | **N8+D4 min** | Gap | KIVI failure? |
 |---|---|---|---|---|
@@ -44,7 +44,7 @@ Tested on an NVIDIA RTX 5060 Ti (16GB) and on a BossGame AMD Ryzen AI Max+ 395 m
 
 N+D's improvement over KIVI is dramatic on the Qwen family and incremental on Llama/Mistral. **The catastrophic outlier layer problem is real but model-specific** — a finding that, to my knowledge, is not directly reported in the published KIVI evaluation.
 
-### Aggressive compression regime (min cosine) at ~7.5× compression
+### Aggressive compression regime (min cosine) at ~7.5x compression
 
 | Model | KIVI 2-bit min | **N8+D2 min** | Gap |
 |---|---|---|---|
@@ -53,18 +53,37 @@ N+D's improvement over KIVI is dramatic on the Qwen family and incremental on Ll
 | Llama-3.1-8B | 0.702 | **0.781** | +0.08 |
 | Mistral-7B-v0.3 | 0.688 | **0.765** | +0.08 |
 
-KIVI 2-bit collapses on Qwen and is rough on Llama/Mistral. N8+D2 stays viable across all four models. **If your compression target is ≥5×, N+D is the only method tested here that doesn't fall off a cliff.**
+KIVI 2-bit collapses on Qwen and is rough on Llama/Mistral. N8+D2 stays viable across all four models. **If your compression target is >=5x, N+D is the only method tested here that doesn't fall off a cliff.**
 
-### N8+D3 Pareto point (~5.15× compression)
+### N8+D3 Pareto point (~5.15x compression)
 
 | Model | KIVI 4-bit min | **N8+D3 min** | N8+D3 compression |
 |---|---|---|---|
-| Qwen2.5-7B | 0.588 | **0.925** | 5.15× |
-| Qwen2.5-1.5B | 0.646 | **0.954** | 5.15× |
-| Llama-3.1-8B | 0.977 | **0.948** | 5.15× |
-| Mistral-7B-v0.3 | 0.953 | **0.949** | 5.16× |
+| Qwen2.5-7B | 0.588 | **0.925** | 5.15x |
+| Qwen2.5-1.5B | 0.646 | **0.954** | 5.15x |
+| Llama-3.1-8B | 0.977 | **0.948** | 5.15x |
+| Mistral-7B-v0.3 | 0.953 | **0.949** | 5.16x |
 
 N8+D3 offers **33% more compression than KIVI 4-bit while matching or exceeding KIVI's worst-case quality** on every model tested. This is the tradeoff point I'd recommend for most production deployments.
+
+### TurboQuant cross-model comparison (added May 16, 2026)
+
+Paper-faithful TurboQuant (Algorithm 1, Zandieh et al., ICLR 2026) was added to the harness in May 2026 to extend the cross-model comparison beyond KIVI. Both random rotation (paper) and Walsh-Hadamard Transform (the variant llama.cpp implementations ship) were tested. No QJL residual; community consensus from the [llama.cpp TurboQuant thread](https://github.com/ggml-org/llama.cpp/discussions/20969) is that QJL hurts attention quality at low bit-widths.
+
+**Per-head minimum cosine at ~3.9x compression (4-bit):**
+
+| Model | KIVI 4-bit | N8+D4 | TurboQuant (random) | TurboQuant (WHT) |
+|---|---|---|---|---|
+| Qwen2.5-7B | 0.588 | **0.969** | 0.034 | -0.051 |
+| Qwen2.5-1.5B | 0.646 | **0.991** | 0.144 | 0.024 |
+| Llama-3.1-8B | 0.977 | 0.990 | 0.974 | **0.977** |
+| Mistral-7B-v0.3 | 0.953 | **0.991** | 0.974 | 0.977 |
+
+TurboQuant matches its paper claims on Llama and Mistral (consistent with the paper's "identical to full-precision at 4x" Needle-In-A-Haystack result). On both Qwen2.5 models, per-head minimum collapses to near zero or negative — at least one head's attention output is anti-correlated with the FP16 baseline. The implementation was verified against the paper's analytical centroid values (page 10) and Lloyd-Max Gaussian distortion reference within 2% before this benchmark was run; see `tests/test_turboquant.py`.
+
+This tests the **paper algorithm** specifically. It does not test the deployed `tq3_0` variants in llama.cpp, which include block-wise handling and outlier-channel treatment that the paper algorithm doesn't specify. Those may already address what's shown here.
+
+Full per-model JSONs in `benchmarks/results/*-2026-05-16.json`.
 
 ---
 
@@ -74,15 +93,15 @@ Three components in the codebase; the headline results above evaluate the **quan
 
 ### 1. Norm-Direction quantization (the core contribution)
 
-Each K and V vector `v` is decomposed into a scalar magnitude `‖v‖` and a unit-direction `v̂ = v / ‖v‖`. The magnitude is quantized at 8 bits per vector; the direction is quantized at 2, 3, or 4 bits per component depending on the target compression ratio. Reconstruction is `v_reconstructed = ‖v‖_q · v̂_q`.
+Each K and V vector `v` is decomposed into a scalar magnitude `||v||` and a unit-direction `v_hat = v / ||v||`. The magnitude is quantized at 8 bits per vector; the direction is quantized at 2, 3, or 4 bits per component depending on the target compression ratio. Reconstruction is `v_reconstructed = ||v||_q * v_hat_q`.
 
-**The mechanism:** quantization error on a unit-direction vector is isotropic with respect to the attention dot product. Per-channel quantization of raw KV vectors stretches the quantization grid to accommodate a few outlier magnitudes, destroying precision in the remaining channels. On the Qwen family this produces the "catastrophic outlier layer" failure mode visible in the results above (KIVI min cosine = 0.59–0.65 at 4-bit). Llama and Mistral have less extreme magnitude variation, so KIVI works adequately at 4-bit on those models — but the magnitude problem returns for everyone at 2-bit, where N+D's robustness is universal.
+**The mechanism:** quantization error on a unit-direction vector is isotropic with respect to the attention dot product. Per-channel quantization of raw KV vectors stretches the quantization grid to accommodate a few outlier magnitudes, destroying precision in the remaining channels. On the Qwen family this produces the "catastrophic outlier layer" failure mode visible in the results above (KIVI min cosine = 0.59-0.65 at 4-bit). Llama and Mistral have less extreme magnitude variation, so KIVI works adequately at 4-bit on those models — but the magnitude problem returns for everyone at 2-bit, where N+D's robustness is universal.
 
 Implementation: [`nd_kv_quant/quantization.py`](nd_kv_quant/quantization.py)
 
 ### 2. Speculative prefetch via attention patterns
 
-For deployments where the KV cache exceeds VRAM and must stream from RAM, the previous token's attention distribution is used to predict which KV entries the next token will need. Prior research notebooks measured 72–74% hit rate when prefetching the top 10–15% of the cache by predicted attention weight.
+For deployments where the KV cache exceeds VRAM and must stream from RAM, the previous token's attention distribution is used to predict which KV entries the next token will need. Prior research notebooks measured 72-74% hit rate when prefetching the top 10-15% of the cache by predicted attention weight.
 
 Implementation: [`nd_kv_quant/speculative.py`](nd_kv_quant/speculative.py). Not yet included in the cross-model benchmark suite.
 
@@ -100,9 +119,9 @@ The harness is designed to support apples-to-apples evaluation of arbitrary KV c
 
 2. **Cross-model evaluation.** Running the same compression method against four model families surfaces architecture-dependent failure modes that single-model evaluations hide. The Qwen-specific KIVI failure is a clear example.
 
-3. **Pluggable methods.** New compression methods can be added by implementing the appropriate interface in `nd_kv_quant/quantization.py`. KIVI 4-bit/2-bit and N+D at 4/3/2-bit directions are reference implementations.
+3. **Pluggable methods.** New compression methods can be added by implementing the appropriate interface in `nd_kv_quant/quantization.py`. KIVI 4-bit/2-bit, N+D at 4/3/2-bit directions, and TurboQuant (random rotation and WHT) are reference implementations.
 
-If you're working on a new KV cache compression method and want a direct comparison against KIVI and N+D across four model families with worst-case quality metrics, this harness should give you a result in a few minutes per model. PRs adding implementations of other published methods (NSNQuant, TurboQuant, KVmix, etc.) are welcome.
+If you're working on a new KV cache compression method and want a direct comparison against KIVI, N+D, and TurboQuant across four model families with worst-case quality metrics, this harness should give you a result in a few minutes per model. PRs adding implementations of other published methods (NSNQuant, KVmix, outlier-aware TurboQuant variants, etc.) are welcome.
 
 ---
 
@@ -114,9 +133,9 @@ This work was developed independently prior to a prior-art search conducted in M
 
 - **MiniCache** (Liu et al., NeurIPS 2024) [[paper](https://arxiv.org/abs/2405.14366)] established the magnitude-direction decomposition of KV cache vectors. MiniCache applies the decomposition to cross-layer merging (averaging directions across adjacent layers, storing per-layer magnitudes); this work applies a similar decomposition to per-vector mixed-precision scalar quantization. The decomposition primitive is shared; the application is different. MiniCache established the decomposition; this work applies it differently and produces direct cross-model comparisons against KIVI that do not appear in MiniCache's evaluation.
 
-- **NSNQuant** (Son et al., NeurIPS 2025) [[paper](https://arxiv.org/abs/2505.18231)] uses a three-step "Normalize–Shift–Normalize" transformation with a Hadamard transform to align KV distributions with a standard normal for calibration-free vector quantization. The first step (token-wise normalization, i.e., extracting the norm) overlaps with this work; the remainder of the pipeline (channel-wise centering, Hadamard rotation, codebook-based VQ) is mechanically distinct from scalar mixed-precision quantization with a separate norm budget.
+- **NSNQuant** (Son et al., NeurIPS 2025) [[paper](https://arxiv.org/abs/2505.18231)] uses a three-step "Normalize-Shift-Normalize" transformation with a Hadamard transform to align KV distributions with a standard normal for calibration-free vector quantization. The first step (token-wise normalization, i.e., extracting the norm) overlaps with this work; the remainder of the pipeline (channel-wise centering, Hadamard rotation, codebook-based VQ) is mechanically distinct from scalar mixed-precision quantization with a separate norm budget.
 
-- **PolarQuant** (Yu et al., 2025) and its productization **TurboQuant** (Zandieh et al., ICLR 2026) [[llama.cpp port](https://github.com/AmesianX/TurboQuant)] use rotation-based scalar quantization with a fixed Walsh-Hadamard transform and a precomputed codebook. Mechanically distinct from norm-direction decomposition. The TurboQuant llama.cpp discussion thread [#20969](https://github.com/ggml-org/llama.cpp/discussions/20969) independently observed that Qwen models fall in a regime where the K/V magnitude ratio is unusually high, which is consistent with the Qwen-specific failure mode this work documents for KIVI.
+- **PolarQuant** (Yu et al., 2025) and its productization **TurboQuant** (Zandieh et al., ICLR 2026) [[llama.cpp port](https://github.com/AmesianX/TurboQuant)] use rotation-based scalar quantization with a fixed Walsh-Hadamard transform and a precomputed codebook. Mechanically distinct from norm-direction decomposition. A paper-faithful implementation is now included in this harness (`nd_kv_quant/turboquant.py`); see the [TurboQuant cross-model comparison](#turboquant-cross-model-comparison-added-may-16-2026) section above for results. The TurboQuant llama.cpp discussion thread [#20969](https://github.com/ggml-org/llama.cpp/discussions/20969) independently observed that Qwen models fall in a regime where the K/V magnitude ratio is unusually high, which is consistent with the Qwen-specific failure mode this work documents for both KIVI and paper-faithful TurboQuant.
 
 ### Mixed-precision KV cache (same family, different mechanisms)
 
@@ -128,11 +147,11 @@ Three things, conservatively:
 
 1. **Per-vector mixed-precision scalar quantization** via magnitude-direction decomposition (8-bit norm, 2/3/4-bit direction). MiniCache established the primitive; this work applies it differently.
 
-2. **Cross-model evaluation surfacing architecture-dependent KIVI failure.** The finding that KIVI's catastrophic outlier layer problem is model-family-specific (Qwen vs. Llama/Mistral) is, to my knowledge, not directly reported in published evaluations.
+2. **Cross-model evaluation surfacing architecture-dependent failure modes** under both KIVI and paper-faithful TurboQuant. The finding that KIVI's catastrophic outlier layer problem is model-family-specific (Qwen vs. Llama/Mistral) is, to my knowledge, not directly reported in published evaluations. The same evaluation reveals that paper-faithful TurboQuant exhibits an analogous Qwen-specific failure.
 
 3. **A reproducible evaluation harness** with first-class worst-case (per-head minimum) cosine reporting across multiple model families. The methodological contribution is making architecture-dependent failure modes visible.
 
-The decomposition primitive is not novel. The specific application, the cross-model failure-mode finding, and the worst-case-quality evaluation methodology are the contributions.
+The decomposition primitive is not novel. The specific application, the cross-model failure-mode findings, and the worst-case-quality evaluation methodology are the contributions.
 
 ---
 
@@ -141,8 +160,9 @@ The decomposition primitive is not novel. The specific application, the cross-mo
 - **Speculative prefetch and tiled fallback are not in the cross-model benchmark suite yet.** They're implemented (`nd_kv_quant/speculative.py`) and were validated in earlier research notebooks on Qwen2.5-7B, but the four-model results above evaluate the quantization component only.
 - **Batch size 1.** Batched-inference behavior is untested.
 - **No PPL or downstream-task evaluation.** Quality is measured via per-head cosine similarity against FP16 output. Cosine similarity tracks PPL well in this regime but is not a substitute for a LongBench or similar evaluation.
+- **TurboQuant comparison tests the paper algorithm, not deployed variants.** The `tq3_0` implementations in llama.cpp (TheTom, animehacker, unixsysdev) include outlier handling and block-wise treatment that the paper doesn't specify. Those may behave differently than what's shown here.
 - **No llama.cpp port.** A port was planned and paused after a prior-art search revealed TurboQuant and related methods are being actively ported by multiple groups.
-- **Context lengths in the benchmark are short** (706–824 tokens). Long-context behavior may differ; this is a known gap.
+- **Context lengths in the benchmark are short** (706-824 tokens). Long-context behavior may differ; this is a known gap.
 - **70B-scale evaluation not run.** Hardware constraints (single 16GB consumer GPU) prevent direct testing.
 
 ---
